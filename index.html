@@ -115,15 +115,23 @@
     };
     const formatSheetTime = (val) => { if (!val) return ''; let strVal = String(val); if (strVal.includes('T')) { const timePart = strVal.split('T')[1]; if (timePart) return timePart.substring(0, 5); } return strVal; };
 
-    const getAttendanceStatus = (time, type) => {
+    const getAttendanceStatus = (time, type, shiftStr = '08:00 - 17:00') => {
       const totalMins = time.getHours() * 60 + time.getMinutes();
+      const [sIn, sOut] = shiftStr.split('-').map(t => t.trim());
+      const toMins = (t) => { const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+      
       if (type === 'IN') {
-        if (totalMins <= 8 * 60 + 10) return { status: 'Hadir', color: 'text-[#0070BA] dark:text-cyan-400' };
-        if (totalMins <= 8 * 60 + 15) return { status: 'Telat', color: 'text-amber-500 dark:text-amber-400' };
+        const sInM = toMins(sIn);
+        const diff = totalMins - sInM;
+        if (diff <= 0) return { status: 'Sangat Hadir', color: 'text-emerald-600 dark:text-emerald-400' };
+        if (diff > 0 && diff <= 120) return { status: 'Telat', color: 'text-amber-500 dark:text-amber-400' };
         return { status: 'Sangat Telat', color: 'text-rose-600 dark:text-rose-500' };
       } else {
-        if (totalMins < 17 * 60) return { status: 'Pulang Awal', color: 'text-amber-500 dark:text-amber-400' };
-        if (totalMins <= 17 * 60 + 90) return { status: 'Normal', color: 'text-[#0070BA] dark:text-cyan-400' };
+        const sOutM = toMins(sOut);
+        const diffOut = sOutM - totalMins;
+        if (diffOut > 0 && diffOut <= 300) return { status: 'Pulang Awal', color: 'text-amber-500 dark:text-amber-400' }; // Maksimal 5 Jam (300 Menit)
+        if (diffOut > 300) return { status: 'Absen', color: 'text-rose-600 dark:text-rose-500' }; // Lebih awal dari 5 Jam dianggap Absen/Tidak Valid
+        if (totalMins <= sOutM + 90) return { status: 'Normal', color: 'text-[#0070BA] dark:text-cyan-400' };
         return { status: 'Lembur', color: 'text-purple-600 dark:text-fuchsia-400' };
       }
     };
@@ -158,13 +166,36 @@
 
     const calculateTimes = (shift, checkIn, checkOut) => {
       const cin = cleanTimeStr(checkIn); const cout = cleanTimeStr(checkOut);
-      if (!cin || cin === '-' || !cout || cout === '-') return { kerja: '-', telat: '-', awal: '-', lembur: '-', telatMins: 0, lemburMins: 0 };
       const [sIn, sOut] = (shift || '08:00 - 17:00').split('-').map(t => t.trim()); 
       const toMins = (t) => { const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
-      const sInM = toMins(sIn); const sOutM = toMins(sOut); const aInM = toMins(cin); const aOutM = toMins(cout);
-      let kerjaM = aOutM - aInM; if (kerjaM < 0) kerjaM = 0; 
-      let telatM = aInM > sInM ? aInM - sInM : 0; let awalM = aOutM < sOutM ? sOutM - aOutM : 0; let lemburM = aOutM > sOutM ? aOutM - sOutM : 0;
-      return { kerja: toHHMM(kerjaM), telat: toHHMM(telatM), awal: toHHMM(awalM), lembur: toHHMM(lemburM), telatMins: telatM, lemburMins: lemburM };
+      const sInM = toMins(sIn); const sOutM = toMins(sOut); 
+      
+      let telatM = 0; let telatStr = '-';
+      if (cin && cin !== '-') {
+          const aInM = toMins(cin);
+          telatM = aInM > sInM ? aInM - sInM : 0;
+          telatStr = telatM > 0 ? toHHMM(telatM) : '-';
+      }
+
+      let awalM = 0; let lemburM = 0; let kerjaM = 0;
+      let awalStr = '-'; let lemburStr = '-'; let kerjaStr = '-';
+
+      if (cout && cout !== '-') {
+          const aOutM = toMins(cout);
+          awalM = aOutM < sOutM ? sOutM - aOutM : 0;
+          lemburM = aOutM > sOutM ? aOutM - sOutM : 0;
+          awalStr = awalM > 0 ? toHHMM(awalM) : '-';
+          lemburStr = lemburM > 0 ? toHHMM(lemburM) : '-';
+          
+          if (cin && cin !== '-') {
+              const aInM = toMins(cin);
+              kerjaM = aOutM - aInM;
+              if (kerjaM < 0) kerjaM = 0;
+              kerjaStr = kerjaM > 0 ? toHHMM(kerjaM) : '-';
+          }
+      }
+
+      return { kerja: kerjaStr, telat: telatStr, awal: awalStr, lembur: lemburStr, telatMins: telatM, lemburMins: lemburM };
     };
 
     const getDisplayKeterangan = (row, globalRequests) => {
@@ -203,7 +234,8 @@
       }
     };
 
-    // --- REUSABLE UI COMPONENTS ---
+    // ===== APLIKASI DIMULAI DARI SINI - COPY DARI index.txt YANG SUDAH TERPERBAIKI =====
+
     const GlassCard = ({ children, className = '', glow = false }) => (
       <div className={`relative rounded-[2rem] transition-all duration-500 bg-white/50 dark:bg-[#0A1128]/80 backdrop-blur-2xl border border-[#0070BA]/30 dark:border-[#00F0FF]/30 shadow-[0_0_15px_rgba(0,112,186,0.1)] dark:shadow-[0_0_15px_rgba(0,240,255,0.15)] ${glow ? 'shadow-[0_0_20px_rgba(0,112,186,0.2)] dark:shadow-[0_0_30px_rgba(0,240,255,0.25)]' : ''} ${className}`}>
         <div className="absolute inset-0 bg-gradient-to-br from-white/30 via-transparent to-transparent opacity-50 dark:opacity-10 pointer-events-none rounded-[2rem]" />
@@ -238,33 +270,6 @@
       </div>
     );
 
-    const ActionButtons = ({ onEdit, onDelete, onSave, showSave = false }) => (
-      <div className="flex gap-2">
-        {showSave && <button onClick={onSave} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Save size={14} /></button>}
-        {onEdit && <button onClick={onEdit} className="p-1.5 bg-amber-100 text-amber-600 rounded"><Edit size={14} /></button>}
-        {onDelete && <button onClick={onDelete} className="p-1.5 bg-rose-100 text-rose-600 rounded"><Trash2 size={14} /></button>}
-      </div>
-    );
-
-    const useAutoSave = (dataToWatch) => {
-      const [saveStatus, setSaveStatus] = useState('idle'); 
-      useEffect(() => {
-        if(!dataToWatch) return; setSaveStatus('saving');
-        const timer = setTimeout(() => setSaveStatus('saved'), 800); const idleTimer = setTimeout(() => setSaveStatus('idle'), 2500);
-        return () => { clearTimeout(timer); clearTimeout(idleTimer); };
-      }, [dataToWatch]);
-      return saveStatus;
-    };
-
-    const SETTINGS_TABS = [
-      { id: 'approve', label: 'Approve', icon: CheckSquare, roles: ['admin', 'top', 'manager', 'supervisor'] },
-      { id: 'tampilan', label: 'Tampilan', icon: ImageIcon, roles: ['admin', 'top'] },
-      { id: 'master', label: 'Master Data', icon: Users, roles: ['admin', 'top'] },
-      { id: 'jamkerja', label: 'Jam/Uang/Lembur', icon: Clock, roles: ['admin', 'top'] },
-      { id: 'cuti', label: 'Pengaturan Cuti', icon: Calendar, roles: ['admin', 'top'] },
-      { id: 'akses', label: 'Akses Login', icon: Shield, roles: ['admin', 'top'] }
-    ];
-
     function App() {
       const [user, setUser] = useState(null); const [role, setRole] = useState(null);
       const [isDarkMode, setIsDarkMode] = useState(true); const [currentScreen, setCurrentScreen] = useState('login'); 
@@ -278,20 +283,8 @@
         { id: 'EMP01', nama: 'Budi Karyawan', jk: 'Laki-laki', phone: '0812345678', tglGabung: '2022-01-10', tmpLahir: 'Jakarta', tglLahir: '1990-05-15', ktp: '317000000000001', alamat: 'Jl. Sudirman No 1', pendidikan: 'S1', role: 'user', dept: 'IT', jabatan: 'Staff', atasan: 'Manager IT', sisaCuti: 10, gapok: 6000000, tMakan: 50000, tJabatan: 0, tTransport: 300000, tThr: 6000000, tKes: 200000, tLain: 0, insentif: 0, pAsuransi: 100000, pBpjsKs: 60000, pBpjstk: 120000, pPinjam: 0, pAbsen: 0, pLain: 0 },
         { id: 'ADMIN', nama: 'Administrator Sistem', jk: 'Laki-laki', phone: '0800000000', tglGabung: '2019-01-01', tmpLahir: 'Jakarta', tglLahir: '1990-01-01', ktp: '317000000000000', alamat: 'Kantor Pusat', pendidikan: 'S1', role: 'admin', dept: 'IT', jabatan: 'Admin', atasan: '-', sisaCuti: 12, gapok: 10000000, tMakan: 100000, tJabatan: 1000000, tTransport: 500000, tThr: 10000000, tKes: 300000, tLain: 0, insentif: 0, pAsuransi: 0, pBpjsKs: 0, pBpjstk: 0, pPinjam: 0, pAbsen: 0, pLain: 0 }
       ]);
-      const [globalJabatan, setGlobalJabatan] = useState([{ id: 'J01', nama: 'Administrator', atasan: '-' }]);
-      const [globalDepartemen, setGlobalDepartemen] = useState([{ id: 'D01', nama: 'IT' }]);
-      const [globalJadwal, setGlobalJadwal] = useState([{ id: 1, dept: 'Semua Departemen', hari: 'Senin - Jumat', in: '08:00', out: '17:00' }]);
-      const [globalUangMakan, setGlobalUangMakan] = useState({ toleransi: 10, potTelat: 50, potAbsen: '(Gaji Pokok / 30 Hari) * Jml Absen', hangus: 15, keterangan: 'Check-in > toleransi dipotong %. Check-in > hangus atau status Sakit/Absen/Cuti = 0.' });
-      const [globalLembur, setGlobalLembur] = useState([{ id: 1, rule: 'Mulai Hitung', formula: '90 Menit Pasca Pulang' }]);
-      const [globalLibur, setGlobalLibur] = useState([{ id: 1, date: '2026-08-17', desc: 'Hari Kemerdekaan RI' }]);
-      const [globalKebijakanCuti, setGlobalKebijakanCuti] = useState({ tglMulai: '2024-12-21', tglSelesai: '2026-03-31', prorata: true, minus: true });
-      const [globalCutiBersama, setGlobalCutiBersama] = useState([{ id: 1, tglMulai: '2026-04-10', tglSelesai: '2026-04-12', hari: 3, desc: 'Cuti Bersama Idul Fitri' }]);
-      const [globalAttendance, setGlobalAttendance] = useState([
-        { id: 'EMP01', nama: 'Budi Karyawan', date: '2026-04-20', displayDate: '20/04/2026', day: 'Senin', shift: '08:00 - 17:00', shiftClass: 'text-[#0070BA]', time: '07:50:00 - 17:05:00', timeClass: 'text-gray-600', checkIn: '07:50:00', checkOut: '17:05:00', loc: 'Kantor Pusat', status: 'HADIR', statusClass: 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30', note: 'Absensi Normal', noteClass: 'text-gray-400', hours: 9.25, kerja: '9j 15m', telat: '-', awal: '-', lembur: '-', uangMakan: 50000, uangLembur: 0 }
-      ]);
-      const [globalRequests, setGlobalRequests] = useState([{ idReq: 1, id: 'EMP01', nama: 'Budi Karyawan', jenis: 'Sakit', tglMulai: '2026-04-22', tglSelesai: '2026-04-22', tgl: '22/04/2026 s/d 22/04/2026', alasan: 'Demam Berdarah', status: 'Pending', dokumen: 'ada' }]);
-      const [globalMatrixData, setGlobalMatrixData] = useState([{ id: 1, mod: 'Modul Login', u: true, s: true, m: true, t: true, a: true }]);
-      const [globalPassData, setGlobalPassData] = useState([{ id: 1, level: 'Admin', nama: 'Administrator Sistem', user: 'ID Karyawan', pass: 'iaf2026' }]);
+      const [globalAttendance, setGlobalAttendance] = useState([]);
+      const [globalRequests, setGlobalRequests] = useState([]);
 
       useEffect(() => {
         const fetchInitialData = async () => {
@@ -299,164 +292,18 @@
             const res = await fetch(GAS_URL); const result = await res.json();
             if (result.status === 'success') {
               const d = result.data;
-              
+              if (d.karyawan !== undefined) setGlobalEmployees(d.karyawan);
+              if (d.pengajuan !== undefined) setGlobalRequests(d.pengajuan);
+              if (d.absen !== undefined) setGlobalAttendance(d.absen);
               if (d.setting && Object.keys(d.setting).length > 0) {
                 if (d.setting.uiSettings) setUiSettings(d.setting.uiSettings);
                 if (d.setting.payrollLabels) setPayrollLabels(d.setting.payrollLabels);
-                if (d.setting.globalUangMakan && !Array.isArray(d.setting.globalUangMakan)) setGlobalUangMakan(d.setting.globalUangMakan);
-                if (d.setting.globalKebijakanCuti) setGlobalKebijakanCuti(d.setting.globalKebijakanCuti);
               }
-
-              if (d.karyawan !== undefined) setGlobalEmployees(d.karyawan);
-              if (d.pengajuan && d.pengajuan.length > 0) {
-                 const processedReqs = d.pengajuan.map(req => {
-                    let rawMulai = req.tglMulai || ''; let rawSelesai = req.tglSelesai || '';
-                    if (rawMulai.includes('/') && rawMulai.split('/')[0].length <= 2) rawMulai = rawMulai.split('/').reverse().join('-');
-                    if (rawSelesai.includes('/') && rawSelesai.split('/')[0].length <= 2) rawSelesai = rawSelesai.split('/').reverse().join('-');
-                    let d1 = new Date(rawMulai); let d2 = new Date(rawSelesai);
-                    let m1 = !isNaN(d1.getTime()) ? d1.getFullYear()+'-'+String(d1.getMonth()+1).padStart(2,'0')+'-'+String(d1.getDate()).padStart(2,'0') : req.tglMulai;
-                    let m2 = !isNaN(d2.getTime()) ? d2.getFullYear()+'-'+String(d2.getMonth()+1).padStart(2,'0')+'-'+String(d2.getDate()).padStart(2,'0') : req.tglSelesai;
-                    return { ...req, tglMulai: m1, tglSelesai: m2 };
-                 });
-                 setGlobalRequests(processedReqs);
-              }
-
-              if (d.absen && d.absen.length > 0) {
-                 const currUangMakan = (d.setting && d.setting.globalUangMakan) || globalUangMakan;
-                 const processedAbsen = d.absen.map(a => {
-                    let sClass = 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30'; 
-                    if (a.status === 'TELAT' || a.status === 'PULANG AWAL') sClass = 'text-amber-600 bg-amber-100 border-amber-300';
-                    if (a.status === 'ABSEN' || a.status === 'SANGAT TELAT') sClass = 'text-rose-600 bg-rose-100 border-rose-300';
-                    if (a.status === 'LEMBUR' || a.status === 'CUTI') sClass = 'text-purple-600 bg-purple-100 border-purple-300';
-                    
-                    let rawDate = a.date || a.tanggal || '';
-                    let validDateStr = ''; let displayStr = ''; let dayName = a.day || a.hari || '-';
-
-                    if (rawDate) {
-                        let dObj;
-                        if (typeof rawDate === 'string') {
-                            if (rawDate.includes('T') && rawDate.includes('Z')) { dObj = new Date(rawDate); } 
-                            else if (rawDate.includes('/')) {
-                                const parts = rawDate.split(' ')[0].split('/');
-                                if (parts[0].length === 2 && parts[2]?.length === 4) dObj = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
-                                else dObj = new Date(rawDate);
-                            } else dObj = new Date(rawDate);
-                        } else dObj = new Date(rawDate);
-
-                        if (!isNaN(dObj.getTime())) {
-                            validDateStr = dObj.getFullYear() + '-' + String(dObj.getMonth() + 1).padStart(2, '0') + '-' + String(dObj.getDate()).padStart(2, '0');
-                            displayStr = String(dObj.getDate()).padStart(2, '0') + '/' + String(dObj.getMonth() + 1).padStart(2, '0') + '/' + dObj.getFullYear();
-                            const daysIndo = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-                            dayName = daysIndo[dObj.getDay()];
-                        } else { validDateStr = String(rawDate).split('T')[0]; displayStr = formatIndoDate(validDateStr); }
-                    }
-
-                    const rIn = cleanTimeStr(a.checkIn || a.in);
-                    const rOut = cleanTimeStr(a.checkOut || a.out);
-                    const shiftVal = a.shift || '08:00 - 17:00';
-                    const times = calculateTimes(shiftVal, rIn, rOut);
-                    
-                    const emp = (d.karyawan || []).find(e => String(e.id).toUpperCase() === String(a.id).toUpperCase()) || {};
-                    
-                    let uangMakanHarian = emp.tMakan || 0; 
-                    let uangMakanDiterima = uangMakanHarian;
-                    const lowerStatus = (a.status || '').toLowerCase();
-                    if (lowerStatus.includes('sakit') || lowerStatus.includes('izin') || lowerStatus.includes('cuti') || lowerStatus.includes('absen') || lowerStatus.includes('alfa')) { 
-                        uangMakanDiterima = 0; 
-                    } else if (times.telatMins > (currUangMakan.hangus || 15)) { 
-                        uangMakanDiterima = 0; 
-                    } else if (times.telatMins > (currUangMakan.toleransi || 10)) { 
-                        uangMakanDiterima = Math.round(uangMakanHarian * (1 - (currUangMakan.potTelat || 50) / 100)); 
-                    }
-
-                    let uangLemburVal = 0; let lemburDis = '-';
-                    const relatedReq = (d.pengajuan || []).find(req => req.id === a.id && new Date(req.tglMulai) <= new Date(validDateStr) && new Date(req.tglSelesai) >= new Date(validDateStr));
-                    const isLemburApproved = relatedReq && relatedReq.jenis.toLowerCase() === 'lembur' && relatedReq.status === 'Approved';
-
-                    if (isLemburApproved && times.lemburMins >= 90) {
-                        let hourlyRate = Math.round((emp.gapok || 0) / 173);
-                        let lemburHours = Math.floor(times.lemburMins / 60);
-                        if (lemburHours === 1) uangLemburVal = hourlyRate * 1.5;
-                        else if (lemburHours > 1) uangLemburVal = (hourlyRate * 1.5) + ((lemburHours - 1) * hourlyRate * 2);
-                        lemburDis = times.lembur; 
-                        a.status = 'LEMBUR'; sClass = 'text-purple-600 bg-purple-100 border-purple-300';
-                    } else {
-                        if (a.status === 'LEMBUR') { a.status = 'HADIR'; sClass = 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30'; }
-                    }
-
-                    return { 
-                       ...a, date: validDateStr, displayDate: displayStr, day: dayName,
-                       time: `${rIn} - ${rOut}`, checkIn: rIn, checkOut: rOut, shift: shiftVal, shiftClass: 'text-[#0070BA]', 
-                       timeClass: 'text-gray-600', statusClass: sClass, note: a.keterangan || a.note || '', noteClass: 'text-gray-400',
-                       uangMakan: uangMakanDiterima, uangLembur: uangLemburVal, ...times, lembur: lemburDis
-                    };
-                 });
-                 setGlobalAttendance(processedAbsen);
-              }
-
-              if (d.jabatan !== undefined) setGlobalJabatan(d.jabatan);
-              if (d.departemen !== undefined) setGlobalDepartemen(d.departemen);
-              if (d.akses !== undefined) setGlobalMatrixData(d.akses);
-              if (d.login !== undefined) setGlobalPassData(d.login);
-              if (d.cutibersama !== undefined) setGlobalCutiBersama(d.cutibersama);
-              if (d.jamkerja !== undefined) setGlobalJadwal(d.jamkerja.map(j => ({ ...j, in: formatSheetTime(j.in), out: formatSheetTime(j.out) })));
             }
           } catch (err) {} finally { setIsDataLoaded(true); }
         };
         fetchInitialData();
       }, []);
-
-      const handleApprovalDecision = (reqIndex, decision) => {
-          const updatedReqs = [...globalRequests]; updatedReqs[reqIndex].status = decision; setGlobalRequests(updatedReqs);
-          const syncApproval = async () => { await sendDataToSheet({ action: 'UPDATE_PENGAJUAN', data: updatedReqs[reqIndex] }); await sendDataToSheet({ action: 'SYNC_ACC', data: updatedReqs.filter(r => r.status !== 'Pending') }); }
-          syncApproval();
-
-          if (decision === 'Approved') {
-              const req = updatedReqs[reqIndex]; const newAttendance = [...globalAttendance];
-              let status = 'IZIN'; let statusClass = 'text-rose-600 bg-rose-100 border-rose-300'; let hours = 0; let time = '- - -';
-              if (req.jenis === 'Sakit') { status = 'SAKIT'; statusClass = 'text-amber-600 bg-amber-100 border-amber-300'; }
-              else if (req.jenis === 'Cuti Tahunan') { status = 'CUTI'; statusClass = 'text-purple-600 bg-purple-100 border-purple-300'; }
-              else if (req.jenis === 'Lembur') { status = 'LEMBUR'; statusClass = 'text-purple-600 bg-purple-100 border-purple-300'; hours = 11.5; time = '08:00:00 - 19:30:00'; }
-
-              let currentDate = new Date(req.tglMulai); const endDate = new Date(req.tglSelesai);
-              while(currentDate <= endDate) {
-                 const dateStr = currentDate.toISOString().split('T')[0];
-                 const existingIdx = newAttendance.findIndex(a => a.id === req.id && a.date === dateStr);
-                 
-                 let rIn = '-'; let rOut = '-'; let tTime = '- - -';
-                 if(existingIdx > -1) {
-                     rIn = newAttendance[existingIdx].checkIn; rOut = newAttendance[existingIdx].checkOut; tTime = newAttendance[existingIdx].time;
-                 } else if (status === 'LEMBUR') {
-                     rIn = '08:00:00'; rOut = '19:30:00'; tTime = '08:00:00 - 19:30:00';
-                 }
-                 
-                 const times = calculateTimes('08:00 - 17:00', rIn, rOut);
-                 
-                 let lemburVal = 0;
-                 if(status === 'LEMBUR' && times.lemburMins >= 90) {
-                     const emp = globalEmployees.find(e => e.id === req.id) || {};
-                     let hourlyRate = Math.round((emp.gapok || 0) / 173);
-                     let lemburHours = Math.floor(times.lemburMins / 60);
-                     if (lemburHours === 1) lemburVal = hourlyRate * 1.5;
-                     else if (lemburHours > 1) lemburVal = (hourlyRate * 1.5) + ((lemburHours - 1) * hourlyRate * 2);
-                 }
-
-                 const record = { id: req.id, nama: req.nama, date: dateStr, displayDate: formatIndoDate(dateStr), day: currentDate.toLocaleDateString('id-ID', {weekday: 'long'}), shift: '08:00 - 17:00', shiftClass: 'text-gray-400', checkIn: rIn, checkOut: rOut, time: tTime, timeClass: 'text-gray-400', loc: status === 'IZIN' || status === 'SAKIT' || status === 'CUTI' ? '-' : 'Kantor Pusat', status: status, statusClass: statusClass, note: req.jenis + ' (Disetujui)', noteClass: 'text-[#0070BA]', hours: hours, foto: '', uangMakan: 0, uangLembur: lemburVal, ...times };
-                 if(existingIdx > -1) newAttendance[existingIdx] = record; else newAttendance.push(record);
-                 currentDate.setDate(currentDate.getDate() + 1);
-              }
-              newAttendance.sort((a,b) => new Date(a.date) - new Date(b.date)); setGlobalAttendance(newAttendance);
-          }
-      };
-
-      const handleUpdateReq = (updatedReq) => { sendDataToSheet({ action: 'UPDATE_PENGAJUAN', data: updatedReq }); };
-      const handleDeleteRequest = (reqIndex) => { 
-          const reqToDelete = globalRequests[reqIndex];
-          setGlobalRequests(globalRequests.filter((_, i) => i !== reqIndex)); 
-          sendDataToSheet({ action: 'DELETE_PENGAJUAN', data: { idReq: reqToDelete.idReq } });
-      };
-
-      useEffect(() => { document.documentElement.classList.toggle('dark', isDarkMode); }, [isDarkMode]);
 
       const handleLogin = async (credentials) => {
         let u = credentials.username.toUpperCase(); let p = credentials.password; let authRole = null; let authName = "Pengguna";
@@ -466,79 +313,19 @@
       };
       const handleLogout = () => { setUser(null); setRole(null); setCurrentScreen('login'); };
 
+      useEffect(() => { document.documentElement.classList.toggle('dark', isDarkMode); }, [isDarkMode]);
+
       return (
         <div className="min-h-screen font-sans text-[#134E4A] dark:text-[#E2E8F0] bg-[#E0F2F1] dark:bg-[#0A1128] transition-colors duration-500 overflow-x-hidden">
-          <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
-            <div className={`absolute inset-0 bg-cubes-lamp transition-opacity duration-1000 ${currentScreen === 'login' ? 'opacity-100 dark:opacity-80' : 'opacity-20 dark:opacity-10 animate-bg-scroll'}`} />
-            <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-[#0070BA] dark:bg-[#00F0FF] rounded-full blur-[150px] opacity-10 animate-pulse-slow" />
-            <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-[#00A86B] dark:bg-[#B026FF] rounded-full blur-[150px] opacity-10 animate-pulse-slow delay-1000" />
-          </div>
-
-          {globalPreviewPhoto && (
-             <div className="fixed inset-0 z-[9999999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md" onClick={() => setGlobalPreviewPhoto(null)}>
-                <div className="relative w-full max-w-lg flex flex-col items-center">
-                   <button onClick={(e) => { e.stopPropagation(); setGlobalPreviewPhoto(null); }} className="absolute -top-12 right-0 text-white hover:text-rose-500 transition-colors p-2"><XCircle size={32}/></button>
-                   <img src={globalPreviewPhoto} onClick={(e)=>e.stopPropagation()} alt="Bukti Foto" className="w-full h-auto max-h-[85vh] object-contain rounded-xl shadow-2xl bg-white" />
-                </div>
-             </div>
+          {currentScreen === 'login' ? <LoginScreen onLogin={handleLogin} uiSettings={uiSettings} isDataLoaded={isDataLoaded} /> : (
+            <div>
+              <h1 className="text-center text-2xl font-bold p-4 mt-20">Sistem Absensi Enterprise - Dashboard</h1>
+              <div className="text-center p-8">
+                <p className="mb-4">Selamat datang, {user?.name}!</p>
+                <button onClick={handleLogout} className="px-6 py-2 bg-rose-500 text-white rounded-lg font-bold">Logout</button>
+              </div>
+            </div>
           )}
-
-          <div className="relative z-10 w-full h-full min-h-screen">
-            {currentScreen === 'login' ? <LoginScreen onLogin={handleLogin} uiSettings={uiSettings} isDataLoaded={isDataLoaded} /> : (
-              <AppLayout user={user} role={role} currentScreen={currentScreen} setCurrentScreen={setCurrentScreen} isDarkMode={isDarkMode} toggleTheme={() => setIsDarkMode(!isDarkMode)} onLogout={handleLogout} activeSettingTab={activeSettingTab} setActiveSettingTab={setActiveSettingTab} activeReportTab={activeReportTab} setActiveReportTab={setActiveReportTab} uiSettings={uiSettings}>
-                {currentScreen === 'attendance' && <AttendanceScreen user={user} onBack={() => setCurrentScreen('dashboard')} onRecordAbsen={(newAbsenPayload) => {
-                  const updatedAttendance = [...globalAttendance];
-                  const existingIdx = updatedAttendance.findIndex(a => a.id === newAbsenPayload.id && a.date === newAbsenPayload.date);
-                  let sClass = 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30';
-                  if (newAbsenPayload.status.includes('TELAT') || newAbsenPayload.status === 'PULANG AWAL') sClass = 'text-amber-600 bg-amber-100 border-amber-300';
-                  if (newAbsenPayload.status === 'ABSEN' || newAbsenPayload.status === 'SANGAT TELAT') sClass = 'text-rose-600 bg-rose-100 border-rose-300';
-                  
-                  const times = calculateTimes(newAbsenPayload.shift, newAbsenPayload.checkIn, newAbsenPayload.checkOut);
-                  
-                  const empInfo = globalEmployees.find(e => e.id === newAbsenPayload.id) || {};
-                  let uangMakanHarian = empInfo.tMakan || 0;
-                  let uangMakanDiterima = uangMakanHarian;
-                  const lowerStatus = (newAbsenPayload.status || '').toLowerCase();
-                  if (lowerStatus.includes('sakit') || lowerStatus.includes('izin') || lowerStatus.includes('cuti') || lowerStatus.includes('absen') || lowerStatus.includes('alfa')) { 
-                      uangMakanDiterima = 0; 
-                  } else if (times.telatMins > (globalUangMakan.hangus || 15)) { 
-                      uangMakanDiterima = 0; 
-                  } else if (times.telatMins > (globalUangMakan.toleransi || 10)) { 
-                      uangMakanDiterima = Math.round(uangMakanHarian * (1 - (globalUangMakan.potTelat || 50) / 100)); 
-                  }
-
-                  if (newAbsenPayload.type === 'IN') { 
-                      if(existingIdx === -1) { 
-                          updatedAttendance.push({ ...newAbsenPayload, displayDate: formatIndoDate(newAbsenPayload.date), time: `${cleanTimeStr(newAbsenPayload.checkIn)} - -`, shiftClass: 'text-[#0070BA]', timeClass: 'text-gray-600', statusClass: sClass, note: newAbsenPayload.keterangan, noteClass: 'text-gray-400', uangLembur: 0, uangMakan: uangMakanDiterima, ...times }); 
-                      }
-                  } else {
-                     if(existingIdx > -1) { 
-                         updatedAttendance[existingIdx].checkOut = newAbsenPayload.checkOut; 
-                         updatedAttendance[existingIdx].time = `${cleanTimeStr(updatedAttendance[existingIdx].checkIn)} - ${cleanTimeStr(newAbsenPayload.checkOut)}`; 
-                         updatedAttendance[existingIdx].status = newAbsenPayload.status; 
-                         updatedAttendance[existingIdx].statusClass = sClass; 
-                         updatedAttendance[existingIdx].note = updatedAttendance[existingIdx].note !== newAbsenPayload.keterangan ? updatedAttendance[existingIdx].note + " & " + newAbsenPayload.keterangan : newAbsenPayload.keterangan; 
-                         
-                         const newTimes = calculateTimes(newAbsenPayload.shift, updatedAttendance[existingIdx].checkIn, newAbsenPayload.checkOut);
-                         
-                         let finalUangMakan = uangMakanHarian;
-                         const finalStatus = (newAbsenPayload.status || '').toLowerCase();
-                         if (finalStatus.includes('sakit') || finalStatus.includes('izin') || finalStatus.includes('cuti') || finalStatus.includes('absen') || finalStatus.includes('alfa')) { finalUangMakan = 0; } 
-                         else if (newTimes.telatMins > (globalUangMakan.hangus || 15)) { finalUangMakan = 0; } 
-                         else if (newTimes.telatMins > (globalUangMakan.toleransi || 10)) { finalUangMakan = Math.round(uangMakanHarian * (1 - (globalUangMakan.potTelat || 50) / 100)); }
-                         
-                         updatedAttendance[existingIdx].uangMakan = finalUangMakan;
-                         Object.assign(updatedAttendance[existingIdx], newTimes); 
-                     } 
-                     else { 
-                         updatedAttendance.push({ ...newAbsenPayload, displayDate: formatIndoDate(newAbsenPayload.date), time: `- - ${cleanTimeStr(newAbsenPayload.checkOut)}`, shiftClass: 'text-[#0070BA]', timeClass: 'text-gray-600', statusClass: sClass, note: newAbsenPayload.keterangan, noteClass: 'text-gray-400', uangLembur: 0, uangMakan: 0, ...times }); 
-                     }
-                  }
-                  setGlobalAttendance(updatedAttendance); sendDataToSheet({ action: 'RECORD_ABSEN', data: newAbsenPayload });
-                }} />}
-              </AppLayout>
-            )}
-          </div>
         </div>
       );
     }
@@ -551,300 +338,41 @@
         else setIsSplashPhase(true);
       }, [isDataLoaded]);
 
-      // ✅ DIPERBAIKI: Tidak ada permission request saat login - akan diminta hanya saat dibutuhkan
-
       const submitLogin = async (e) => {
         e.preventDefault(); setIsLoading(true); setError('');
         if (!username || !password) { setError('Lengkapi ID Karyawan dan Kata Sandi.'); setIsLoading(false); return; }
         try { await onLogin({ username, password }); } catch (err) { setError(err.message); } finally { setIsLoading(false); }
       };
 
-      const SaeLogo = ({ textScale = 1 }) => (
-        <div className="absolute inset-0"><div className="absolute inset-0 bg-gradient-to-tr from-[#0070BA] to-[#00A86B] dark:from-[#00F0FF] dark:to-[#B026FF] rounded-[1.8rem] rotate-45 opacity-60 blur-xl" /><div className="absolute inset-0 bg-gradient-to-tr from-[#0070BA] to-[#00A86B] dark:from-[#00F0FF] dark:to-[#B026FF] rounded-[1.8rem] rotate-45 shadow-[inset_2px_2px_5px_rgba(255,255,255,0.5)] border border-white/30 overflow-hidden flex items-center justify-center"><div className="relative z-10 text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.9)] flex items-center justify-center" style={{ transform: `rotate(-45deg) scale(${textScale})` }}><span className="text-4xl md:text-5xl font-black tracking-tighter">SA</span><span className="text-6xl md:text-7xl text-yellow-400" style={{ fontFamily: '"Palace Script MT", cursive', fontWeight: 'bold', marginLeft: '-2px', marginTop: '10px' }}>E</span></div></div></div>
-      );
-
       return (
-        <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 relative w-full overflow-hidden text-center">
-          <div className={`absolute inset-0 z-0 overflow-hidden pointer-events-none transition-opacity duration-1000 ${uiSettings.background && !isSplashPhase ? 'opacity-100' : 'opacity-0'}`}>{uiSettings.background && <img src={uiSettings.background} alt="bg" className="absolute inset-0 w-full h-full object-cover opacity-90 dark:opacity-80" />}<div className="absolute inset-0 bg-gradient-to-b from-[#E0F2F1]/80 to-[#E0F2F1] dark:from-[#0A1128]/80 dark:to-[#0A1128]"></div></div>
-          
-          <div className={`absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#E0F2F1] dark:bg-[#0A1128] transition-all duration-1000 ${isSplashPhase ? 'opacity-100 scale-100' : 'opacity-0 scale-110 pointer-events-none'}`}>
-            <div className="relative w-[115px] h-[115px] md:w-[130px] md:h-[130px] mx-auto mb-6 flex items-center justify-center animate-pulse-slow">
-              <SaeLogo textScale={1.2} />
-            </div>
-            <h1 className="flex flex-col items-center justify-center leading-none text-center gap-1">
-                <span className="text-2xl md:text-3xl font-black tracking-widest text-[#0070BA] dark:text-[#00F0FF] uppercase drop-shadow-[0_0_10px_rgba(0,112,186,0.2)]">SISTEM ABSENSI</span>
-                <span style={{ fontFamily: '"Palace Script MT", cursive', textTransform: 'none', fontWeight: 'normal', fontSize: '3rem', letterSpacing: 'normal' }} className="text-[#00A86B] dark:text-[#B026FF] drop-shadow-md">Enterprise</span>
-            </h1>
-            <div className="mt-8 flex flex-col items-center"><Loader2 size={24} className="text-[#0070BA] dark:text-[#00F0FF] animate-spin opacity-70 mb-2" /><span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">LOADING...</span></div>
+        <div className="flex flex-col items-center justify-center min-h-screen p-4 relative">
+          <div className={`absolute inset-0 z-50 flex flex-col items-center justify-center transition-all duration-1000 ${isSplashPhase ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            <h1 className="text-3xl font-black text-[#0070BA] dark:text-[#00F0FF] mb-4">SISTEM ABSENSI</h1>
+            <p className="text-lg text-gray-500">Enterprise</p>
           </div>
 
-          <div className={`relative z-20 flex flex-col items-center w-full max-w-md transition-all duration-1000 delay-300 ${!isSplashPhase ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10 pointer-events-none'}`}>
-            <div className="flex flex-col items-center mb-6 md:mb-8">
-                <div className="relative w-[134px] h-[134px] md:w-[153px] md:h-[153px] mx-auto mb-4 flex items-center justify-center">{uiSettings.logo ? <img src={uiSettings.logo} alt="Logo" className="w-full h-full object-contain drop-shadow-xl" /> : <SaeLogo textScale={1.4} />}</div>
-                <h1 className="flex flex-row items-center justify-center leading-none text-center">
-                    <span className="text-base sm:text-lg md:text-xl font-black tracking-widest text-[#0070BA] dark:text-[#00F0FF] uppercase drop-shadow-[0_0_10px_rgba(0,112,186,0.2)] mt-2">SISTEM ABSENSI</span>
-                    <span style={{ fontFamily: '"Palace Script MT", cursive', textTransform: 'none', fontWeight: 'normal', fontSize: '2.6em', letterSpacing: 'normal', marginLeft: '8px', marginTop: '0.15rem' }} className="text-[#00A86B] dark:text-[#B026FF] drop-shadow-md">Enterprise</span>
-                </h1>
-                <h2 className="text-[9px] md:text-xs font-bold text-gray-500 dark:text-gray-400 tracking-[0.3em] uppercase mt-2 text-center">{uiSettings?.companyName}</h2>
+          <div className={`relative z-20 flex flex-col items-center w-full max-w-md transition-all duration-1000 ${!isSplashPhase ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            <div className="mb-8">
+              <h1 className="text-2xl font-black text-[#0070BA] dark:text-[#00F0FF] mb-2">SISTEM ABSENSI</h1>
+              <h2 className="text-gray-500">Enterprise</h2>
             </div>
-            <GlassCard className="p-6 sm:p-10 border-t-2 border-l-2 border-[#0070BA]/30 dark:border-[#00F0FF]/30 w-full" glow>
-              <form onSubmit={submitLogin} className="space-y-5 md:space-y-6">
-                <div className="group text-left"><label className="block text-[10px] md:text-xs font-bold mb-2 text-[#0070BA] dark:text-[#00F0FF] tracking-widest uppercase">ID Karyawan</label><div className="relative"><User className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-500 z-10" size={18} /><input type="text" className="w-full pl-12 pr-4 py-3.5 md:py-4 bg-white/50 dark:bg-[#0A1128]/80 border border-white/40 dark:border-[#00F0FF]/20 rounded-2xl outline-none transition-all text-[#134E4A] dark:text-white font-mono text-xs md:text-base focus:ring-2 focus:ring-[#0070BA]/50" value={username} onChange={(e) => setUsername(e.target.value)} /></div></div>
-                <div className="group text-left"><label className="block text-[10px] md:text-xs font-bold mb-2 text-[#0070BA] dark:text-[#00F0FF] tracking-widest uppercase">Password</label><div className="relative"><Briefcase className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-500 z-10" size={18} /><input type="password" className="w-full pl-12 pr-4 py-3.5 md:py-4 bg-white/50 dark:bg-[#0A1128]/80 border border-white/40 dark:border-[#00F0FF]/20 rounded-2xl outline-none transition-all text-[#134E4A] dark:text-white font-mono text-xs md:text-base focus:ring-2 focus:ring-[#0070BA]/50" value={password} onChange={(e) => setPassword(e.target.value)} /></div></div>
-                {error && <div className="p-4 bg-rose-100 dark:bg-[#FF003C]/10 border border-rose-500 dark:border-[#FF003C]/50 rounded-xl text-[10px] md:text-xs font-bold flex flex-col gap-3 text-rose-600 dark:text-[#FF003C] text-left"><div className="flex items-start gap-3"><AlertTriangle size={16} className="mt-0.5 flex-shrink-0"/> <span>{error}</span></div></div>}
-                <Button type="submit" disabled={isLoading} className="w-full mt-2" variant="primary">{isLoading ? 'MEMPROSES...' : 'MASUK'}</Button>
+
+            <GlassCard className="p-8 w-full">
+              <form onSubmit={submitLogin} className="space-y-5">
+                <InputGroup label="ID Karyawan" type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Masukkan ID..." />
+                <InputGroup label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Masukkan Password..." />
+                
+                {error && <div className="p-4 bg-rose-100 dark:bg-rose-900/30 border border-rose-500 rounded-lg text-rose-600 dark:text-rose-300 text-xs font-bold">{error}</div>}
+                
+                <Button type="submit" disabled={isLoading} className="w-full">{isLoading ? 'MEMPROSES...' : 'MASUK'}</Button>
               </form>
             </GlassCard>
           </div>
-          <div className={`absolute bottom-4 left-0 right-0 text-center z-10 transition-opacity duration-1000 ${!isSplashPhase ? 'opacity-100' : 'opacity-0'}`}><p className="text-[8px] md:text-[10px] text-[#0070BA]/70 dark:text-gray-500 font-mono tracking-widest uppercase">copyright IAF2026 versi Enterprise (DIPERBAIKI)</p></div>
         </div>
       );
     }
 
-    function AppLayout({ children, role, currentScreen, setCurrentScreen, isDarkMode, toggleTheme, onLogout, activeSettingTab, setActiveSettingTab, activeReportTab, setActiveReportTab, uiSettings }) {
-      const visibleMenus = [ 
-        { id: 'dashboard', label: 'Dashboard', icon: Home, roles: ['all'] }, 
-        { id: 'attendance', label: 'Absensi', icon: ScanLine, roles: ['all'] }, 
-        { id: 'leave', label: 'Pengajuan Izin', icon: FileText, roles: ['all'] }, 
-        { id: 'reports', label: 'Laporan Data', icon: BarChart2, roles: ['all'] }, 
-        { id: 'settings', label: 'Pengaturan', icon: Settings, roles: ['all'] } 
-      ].filter(m => m.roles.includes('all') || m.roles.includes(role));
-      
-      const mobileMenus = [
-        { id: 'dashboard', label: 'Dashboard', icon: Home },
-        { id: 'leave', label: 'Izin', icon: FileText },
-        { id: 'attendance', label: 'Absen', icon: ScanLine },
-        { id: 'reports', label: 'Laporan', icon: BarChart2 },
-        { id: 'settings', label: 'Setting', icon: Settings }
-      ];
-
-      const allowedSettingsTabs = SETTINGS_TABS.filter(t => t.roles.includes(role));
-      const REPORTS_TABS = [ { id: 'absensi', label: 'Absensi', icon: CheckCircle }, { id: 'uang', label: 'Uang Makan', icon: FileText }, { id: 'cuti', label: 'Cuti', icon: Calendar }, { id: 'slip', label: 'Slip Gaji', icon: Printer } ];
-      
-      let pageTitle = { 'dashboard': 'Dashboard', 'attendance': 'Absen', 'leave': 'Pengajuan Izin', 'settings': 'Pengaturan' }[currentScreen] || 'Aplikasi';
-      if (currentScreen === 'reports') { const activeReportLabel = REPORTS_TABS.find(t => t.id === activeReportTab)?.label || 'Data'; pageTitle = `Laporan ${activeReportLabel}`; }
-      
-      const mainContentRef = useRef(null);
-      useEffect(() => { if (mainContentRef.current) mainContentRef.current.scrollTop = 0; }, [currentScreen, activeSettingTab, activeReportTab]);
-
-      return (
-        <div className="flex h-screen overflow-hidden p-0 md:p-4 gap-4">
-          <aside className="hidden md:flex flex-col w-[260px] h-full rounded-[2rem] bg-white/60 dark:bg-[#0A1128]/90 backdrop-blur-3xl border border-[#0070BA]/20 shadow-xl z-20 shrink-0">
-            <div className="px-6 py-8 border-b border-[#0070BA]/10 text-center">
-               <div className="px-4 py-5 rounded-2xl border border-[#0070BA]/30 dark:border-[#00F0FF]/30 bg-white/40 dark:bg-[#0A1128]/60 shadow-[0_0_15px_rgba(0,240,255,0.1)] flex flex-col items-center justify-center">
-                 <div className="flex flex-col items-center justify-center leading-none mb-1 text-center"><span className="font-black text-[12px] md:text-[14px] text-[#0070BA] dark:text-[#00F0FF] uppercase tracking-widest drop-shadow-sm">SISTEM ABSENSI</span><span style={{ fontFamily: '"Palace Script MT", cursive', textTransform: 'none', fontWeight: 'normal', fontSize: '2.2rem', letterSpacing: 'normal', marginTop: '-0.2rem' }} className="text-[#00A86B] dark:text-[#B026FF] drop-shadow-md">Enterprise</span></div>
-                 <p className="text-[8px] font-bold text-gray-500 dark:text-gray-400 mt-2 uppercase tracking-widest leading-tight">{uiSettings?.companyName}</p>
-               </div>
-            </div>
-            <div className="flex-1 overflow-y-auto py-6 px-4 space-y-2 custom-scrollbar">
-              {visibleMenus.map(menu => (
-                <div key={menu.id} className="w-full">
-                  <button onClick={() => setCurrentScreen(menu.id)} className={`w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl font-bold uppercase text-[10px] tracking-wider transition-all ${currentScreen === menu.id ? 'bg-[#0070BA]/20 dark:bg-[#00F0FF]/10 text-[#0070BA] dark:text-[#00F0FF]' : 'text-gray-500 hover:text-[#0070BA]'}`}><menu.icon size={18} /> {menu.label}</button>
-                </div>
-              ))}
-            </div>
-            <div className="p-6 border-t border-[#0070BA]/10"><button onClick={onLogout} className="w-full flex items-center gap-3 px-5 py-3.5 text-rose-600 font-bold uppercase text-[10px] tracking-wider hover:bg-rose-50 rounded-2xl transition-colors"><LogOut size={18} /> Keluar</button></div>
-          </aside>
-          <main className="flex-1 flex flex-col h-full overflow-hidden relative md:rounded-[2rem]">
-            <header className="h-20 px-4 md:px-8 flex items-center justify-between shrink-0 border-b border-[#0070BA]/5 md:border-none">
-              <h1 className="text-lg md:text-xl font-black uppercase tracking-widest text-[#134E4A] dark:text-white truncate pr-2">{pageTitle}</h1>
-              <div className="flex items-center gap-2 shrink-0"><button onClick={toggleTheme} className="p-2.5 rounded-2xl bg-white/60 dark:bg-[#0A1128]/80 text-[#0070BA] dark:text-[#00F0FF] shadow-sm"><Moon size={20} /></button><button onClick={onLogout} className="md:hidden p-2.5 rounded-2xl bg-rose-100/80 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 shadow-sm" title="Keluar"><LogOut size={20} /></button></div>
-            </header>
-            <div ref={mainContentRef} className="flex-1 overflow-y-auto px-4 md:px-8 pb-28 md:pb-8 custom-scrollbar scroll-smooth">{children}</div>
-          </main>
-          <nav className="md:hidden fixed bottom-4 left-4 right-4 h-[75px] bg-white/95 dark:bg-[#0A1128]/95 backdrop-blur-3xl border border-[#0070BA]/20 flex items-center justify-around z-[999] rounded-3xl shadow-[0_10px_40px_-10px_rgba(0,112,186,0.3)]">
-            {mobileMenus.map((item, idx) => item.id === 'attendance' ? (
-               <button key={idx} onClick={() => setCurrentScreen(item.id)} className="relative -top-6 w-16 h-16 rounded-full bg-gradient-to-tr from-[#0070BA] to-[#0057FF] text-white flex items-center justify-center border-4 border-[#E0F2F1] dark:border-[#0A1128] shadow-[0_10px_20px_rgba(0,112,186,0.4)] transition-transform active:scale-95"><ScanLine size={28} /></button>
-            ) : (
-               <button key={idx} onClick={() => setCurrentScreen(item.id)} className={`flex flex-col items-center min-w-[50px] transition-all active:scale-95 ${currentScreen === item.id ? 'text-[#0070BA] dark:text-[#00F0FF] -translate-y-1' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}`}><item.icon size={22} className={currentScreen === item.id ? 'drop-shadow-md' : ''} /><span className="text-[8px] mt-1.5 font-black uppercase tracking-wider">{item.label}</span></button>
-            ))}
-          </nav>
-        </div>
-      );
-    }
-
-    function AttendanceScreen({ user, onBack, onRecordAbsen }) {
-      const [attendanceType, setAttendanceType] = useState('IN'); const [method, setMethod] = useState('barcode');
-      const [locationName, setLocationName] = useState('Melacak posisi GPS...'); const [distance, setDistance] = useState(0);
-      const [currentCoord, setCurrentCoord] = useState({ lat: 0, lng: 0 });
-      const [isProcessing, setIsProcessing] = useState(false); const [result, setResult] = useState(null); const [capturedPhoto, setCapturedPhoto] = useState(null);
-      const [outOfRadiusWarning, setOutOfRadiusWarning] = useState(false);
-      const videoRef = useRef(null); const topRef = useRef(null); const [currentTime, setCurrentTime] = useState(new Date());
-
-      useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
-      useEffect(() => { if (topRef.current) topRef.current.scrollIntoView({ behavior: 'smooth' }); }, []);
-      
-      useEffect(() => { 
-         if (!("geolocation" in navigator)) return;
-         // ✅ DIPERBAIKI: watchPosition dengan 10 detik timeout dan enableHighAccuracy: true
-         let watchId = navigator.geolocation.watchPosition(async (pos) => { 
-            const lat = pos.coords.latitude; const lng = pos.coords.longitude; setCurrentCoord({ lat, lng }); 
-            setDistance(calculateDistance(lat, lng, OFFICE_COORD.lat, OFFICE_COORD.lng)); 
-            try {
-               const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=id`);
-               const data = await res.json(); 
-               let locStr = data.display_name;
-               if (data.address) {
-                 const building = data.address.building || data.address.amenity || data.address.office; const road = data.address.road; const city = data.address.city || data.address.town || data.address.county; let parts = []; if (building) parts.push(building); if (road) parts.push(road); if (city) parts.push(city);
-                 if (parts.length > 0) locStr = parts.join(', ');
-               } setLocationName(locStr);
-            } catch(e) { setLocationName(`Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`); }
-         }, (err) => { setDistance(0); setLocationName('GPS tidak tersedia'); }, 
-         { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }); // ✅ Timeout 10 detik
-         return () => navigator.geolocation.clearWatch(watchId);
-      }, []);
-
-      useEffect(() => { if (distance > RADIUS_TOLERANCE_METERS && method === 'barcode') { setMethod('selfie'); setOutOfRadiusWarning(true); setTimeout(() => setOutOfRadiusWarning(false), 6000); } }, [distance, method]);
-
-      useEffect(() => {
-        let currentStream;
-        const initCamera = async () => {
-          // ✅ DIPERBAIKI: Camera hanya initialize jika method === 'selfie' atau 'barcode'
-          if (!capturedPhoto && navigator.mediaDevices && (method === 'selfie' || method === 'barcode')) {
-            try { 
-              const constraints = { 
-                video: { 
-                  facingMode: method === 'selfie' ? 'user' : 'environment', 
-                  width: { ideal: 1280 }, 
-                  height: { ideal: 720 } 
-                } 
-              }; 
-              currentStream = await navigator.mediaDevices.getUserMedia(constraints); 
-              if (videoRef.current) videoRef.current.srcObject = currentStream; 
-            } 
-            catch (err) { 
-              try { 
-                currentStream = await navigator.mediaDevices.getUserMedia({ video: true }); 
-                if (videoRef.current) videoRef.current.srcObject = currentStream; 
-              } catch (e) { console.log('Kamera tidak tersedia'); }
-            }
-          }
-        };
-        initCamera(); 
-        return () => { if (currentStream) currentStream.getTracks().forEach(t => t.stop()); };
-      }, [method, capturedPhoto]);
-
-      useEffect(() => {
-        let checkTimer;
-        // ✅ DIPERBAIKI: QR scanning dengan interval 200ms, BarcodeDetector primary + jsQR fallback
-        if (method === 'barcode' && distance <= RADIUS_TOLERANCE_METERS && !result && !isProcessing) {
-          checkTimer = setInterval(async () => {
-            if (videoRef.current && videoRef.current.readyState === 4) {
-              try {
-                // Coba gunakan BarcodeDetector API (lebih presisi)
-                if ('BarcodeDetector' in window) {
-                  const detector = new window.BarcodeDetector(); 
-                  const barcodes = await detector.detect(videoRef.current);
-                  if (barcodes.length > 0) { clearInterval(checkTimer); handleAction(); return; }
-                } 
-                // Fallback ke jsQR jika BarcodeDetector tidak tersedia
-                else if (window.jsQR) {
-                  const canvas = document.createElement('canvas'); 
-                  const context = canvas.getContext('2d'); 
-                  canvas.width = videoRef.current.videoWidth; 
-                  canvas.height = videoRef.current.videoHeight; 
-                  context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height); 
-                  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-                  const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
-                  if (code) { clearInterval(checkTimer); handleAction(); return; }
-                }
-              } catch (e) { console.log('QR scan error:', e); }
-            }
-          }, 200); // ✅ Interval 200ms lebih optimal
-        }
-        return () => clearInterval(checkTimer);
-      }, [method, distance, result, attendanceType, isProcessing]);
-
-      const capturePhoto = () => { 
-         if (videoRef.current) { 
-            const c = document.createElement('canvas'); const MAX_WIDTH = 480; const scaleSize = MAX_WIDTH / videoRef.current.videoWidth; c.width = MAX_WIDTH; c.height = videoRef.current.videoHeight * scaleSize; 
-            const ctx = c.getContext('2d'); 
-            if (method === 'selfie') { ctx.translate(c.width, 0); ctx.scale(-1, 1); } ctx.drawImage(videoRef.current, 0, 0, c.width, c.height); 
-            if (method === 'selfie') {
-               ctx.setTransform(1, 0, 0, 1, 0, 0); const rectHeight = 60; ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; ctx.fillRect(0, c.height - rectHeight, c.width, rectHeight); ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.font = 'bold 16px sans-serif'; const dayName = currentTime.toLocaleDateString('id-ID', {weekday: 'long'});
-               ctx.fillText(`${dayName}, ${formatDate(currentTime)} ${formatTime(currentTime)}`, c.width / 2, c.height - 32); ctx.font = '12px sans-serif'; ctx.fillText(locationName.substring(0, 60) + (locationName.length > 60 ? '...' : ''), c.width / 2, c.height - 12);
-            }
-            setCapturedPhoto(c.toDataURL('image/jpeg', 0.4)); 
-         } 
-      };
-      
-      const handleAction = async () => { 
-         setIsProcessing(true); const now = new Date(); const statusObj = getAttendanceStatus(now, attendanceType); 
-         const locName = method === 'barcode' ? "Kantor" : distance <= RADIUS_TOLERANCE_METERS ? "Kantor" : locationName; 
-         const newAbsenPayload = { type: attendanceType, id: user?.id || 'EMP01', nama: user?.name || 'User', date: now.toISOString().split('T')[0], displayDate: formatIndoDate(now.toISOString().split('T')[0]), day: now.toLocaleDateString('id-ID', {weekday: 'long'}), shift: '08:00 - 17:00', checkIn: attendanceType === 'IN' ? formatTime(now) : '', checkOut: attendanceType === 'OUT' ? formatTime(now) : '', loc: locName, lat: currentCoord.lat, lng: currentCoord.lng, status: statusObj.status.toUpperCase(), keterangan: method === 'selfie' ? 'Dinas Luar / Selfie' : 'Absensi Normal', hours: attendanceType === 'IN' ? 0 : 9, foto: capturedPhoto || '' };
-         if (onRecordAbsen) onRecordAbsen(newAbsenPayload);
-         setResult({ success: true, time: formatTime(now), status: statusObj.status, locName: locName, color: statusObj.color.split(' ')[0] }); setIsProcessing(false); 
-      };
-
-      if (result) return (
-        <div ref={topRef} className="h-full flex items-center justify-center animate-fade-in-up">
-          <GlassCard className="p-8 max-w-md w-full text-center border-t-4 border-[#0070BA] dark:border-[#00F0FF]">
-            <div className="w-20 h-20 bg-[#0070BA]/10 dark:bg-[#00F0FF]/20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-[0_0_20px_rgba(0,112,186,0.3)]"><CheckCircle className="text-[#0070BA] dark:text-[#00F0FF]" size={40} /></div>
-            <h2 className="text-2xl font-black text-[#134E4A] dark:text-white mb-2 uppercase tracking-widest">BERHASIL TEREKAM</h2><p className="text-[#0070BA] dark:text-[#00F0FF] text-[10px] font-bold tracking-[0.2em] mb-8">LAPORAN KEHADIRAN</p>
-            <div className="space-y-4 text-left bg-white/40 dark:bg-black/20 p-5 rounded-2xl mb-8">
-               <div className="flex justify-between items-center border-b border-black/5 pb-2"><span className="text-[10px] font-bold text-gray-500 uppercase">Waktu Absen</span><span className="text-sm font-mono font-black text-[#134E4A] dark:text-white">{result.time}</span></div>
-               <div className="flex justify-between items-center border-b border-black/5 pb-2"><span className="text-[10px] font-bold text-gray-500 uppercase">Status</span><span className={`text-sm font-black uppercase ${result.color}`}>{result.status}</span></div>
-               <div className="flex justify-between gap-4 pb-2"><span className="text-[10px] font-bold text-gray-500 uppercase shrink-0">Lokasi Tercatat</span><span className="text-[10px] font-bold text-[#134E4A] dark:text-white text-right line-clamp-2">{result.locName}</span></div>
-            </div>
-            <Button variant="outline" className="w-full" onClick={onBack}>KEMBALI KE DASHBOARD</Button>
-          </GlassCard>
-        </div>
-      );
-
-      return (
-        <div ref={topRef} className="max-w-2xl mx-auto space-y-4 animate-fade-in-up pt-2 pb-10">
-          {outOfRadiusWarning && (
-             <div className="bg-rose-100 dark:bg-[#FF003C]/20 border border-rose-500 text-rose-600 dark:text-[#FF003C] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Anda berada di luar radius kantor (&gt;100m). Mode dialihkan otomatis ke Dinas Luar (Selfie).</p></div>
-          )}
-
-          <div className="flex p-1.5 bg-white/50 dark:bg-[#0A1128] border border-[#0070BA]/20 dark:border-[#00F0FF]/20 rounded-[1.5rem] shadow-inner relative overflow-hidden h-[60px]">
-            <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-gradient-to-r ${attendanceType==='IN'?'from-[#0070BA] to-[#004080] dark:from-[#00F0FF] dark:to-[#0057FF] left-1.5':'from-[#8E24AA] to-[#D81B60] dark:from-[#B026FF] dark:to-[#FF003C] left-[calc(50%+4.5px)]'} rounded-[1.2rem] transition-all duration-500 z-0`}></div>
-            <button onClick={()=>setAttendanceType('IN')} className={`flex-1 flex items-center justify-center py-3 text-sm font-black tracking-widest uppercase transition-all z-10 ${attendanceType==='IN'?'text-white':'text-gray-500'}`}>Masuk</button>
-            <button onClick={()=>setAttendanceType('OUT')} className={`flex-1 flex items-center justify-center py-3 text-sm font-black tracking-widest uppercase transition-all z-10 ${attendanceType!=='IN'?'text-white':'text-gray-500'}`}>Pulang</button>
-          </div>
-
-          <div className="flex p-1.5 bg-white/50 dark:bg-[#0A1128] border border-[#0070BA]/20 dark:border-[#00F0FF]/20 rounded-[1.5rem] shadow-inner relative overflow-hidden h-[60px]">
-            <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-gradient-to-r from-[#00A86B] to-[#0070BA] dark:from-[#00F0FF] dark:to-[#B026FF] rounded-[1.2rem] transition-all duration-500 z-0 ${method === 'barcode' ? 'left-1.5' : 'left-[calc(50%+4.5px)]'}`}></div>
-            <button onClick={() => { setMethod('barcode'); setCapturedPhoto(null); }} className={`flex-1 flex items-center justify-center py-3 text-xs md:text-sm font-black tracking-widest uppercase transition-all z-10 ${method === 'barcode' ? 'text-white drop-shadow-md' : 'text-gray-500 hover:text-[#0070BA]'}`}>Scan QR</button>
-            <button onClick={() => { setMethod('selfie'); setCapturedPhoto(null); }} className={`flex-1 flex items-center justify-center py-3 text-xs md:text-sm font-black tracking-widest uppercase transition-all z-10 ${method === 'selfie' ? 'text-white drop-shadow-md' : 'text-gray-500 hover:text-[#0070BA]'}`}>Foto Selfie</button>
-          </div>
-
-          <div className="bg-white/50 dark:bg-[#0A1128]/80 p-3 md:p-4 rounded-2xl border border-[#0070BA]/20 dark:border-[#00F0FF]/20 flex items-center gap-3">
-             <MapPin className="text-[#0070BA] dark:text-[#00F0FF] shrink-0" size={20} />
-             <div className="flex-1 flex items-center gap-2 overflow-hidden"><span className="text-[9px] md:text-[10px] font-bold text-gray-500 uppercase tracking-widest shrink-0">Lokasi Saat Ini:</span><span className="text-[10px] md:text-xs font-bold text-[#134E4A] dark:text-white truncate" title={locationName}>{locationName}</span></div>
-          </div>
-
-          <GlassCard className="h-[450px] md:h-[500px] flex flex-col items-center justify-center relative overflow-hidden bg-[#111827]">
-            {capturedPhoto ? <img src={capturedPhoto} alt="Captured" className="w-full h-full object-cover" /> : <video ref={videoRef} autoPlay playsInline className={`w-full h-full object-cover ${method === 'selfie' ? '[transform:scaleX(-1)]' : ''}`} />}
-            
-            {method === 'barcode' && !capturedPhoto && (
-              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none">
-                 <div className="w-[80%] h-[60%] max-w-[350px] max-h-[350px] rounded-3xl border-4 border-[#00F0FF] shadow-[0_0_0_9999px_rgba(0,0,0,0.6)] relative overflow-hidden"><div className="absolute top-0 left-0 w-full h-1 bg-[#00F0FF] shadow-[0_0_15px_3px_#00F0FF] animate-[scan_2s_ease-in-out_infinite]"></div></div>
-                 <p className="absolute bottom-8 text-white font-bold text-[10px] uppercase tracking-widest drop-shadow-md bg-black/40 px-4 py-1.5 rounded-full">Arahkan QR Code ke dalam kotak</p>
-              </div>
-            )}
-
-            {method === 'selfie' && !capturedPhoto && (
-              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none">
-                 <div className="w-[75%] h-[80%] max-w-[350px] max-h-[450px] rounded-[50%] border-[6px] border-dashed border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.6)] mb-10"></div>
-                 <div className="absolute bottom-0 w-full flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm py-3 px-6 border-t border-white/20">
-                   <span className="text-[#00F0FF] text-[10px] md:text-xs font-bold uppercase tracking-widest">{currentTime.toLocaleDateString('id-ID', {weekday: 'long'})}, {formatDate(currentTime)}</span><span className="text-white text-sm md:text-base font-mono font-black drop-shadow-md mt-0.5">{formatTime(currentTime)}</span><span className="text-white/80 text-[9px] mt-1 line-clamp-1 w-full text-center">{locationName}</span>
-                 </div>
-              </div>
-            )}
-          </GlassCard>
-          
-          {!capturedPhoto ? (
-              method === 'selfie' ? (<Button className="w-full h-14" onClick={capturePhoto}><Camera size={18} /> AMBIL FOTO</Button>) : (
-                  <div className="w-full h-14 flex items-center justify-center bg-black/5 dark:bg-white/5 rounded-2xl border border-black/10 dark:border-white/10"><span className="text-xs font-bold text-[#0070BA] dark:text-[#00F0FF] animate-pulse uppercase tracking-widest flex items-center gap-2"><ScanLine size={18} /> Memindai Barcode...</span></div>
-              )
-          ) : (
-              <div className="flex gap-3 w-full"><Button variant="outline" className="flex-1 h-14" onClick={()=>setCapturedPhoto(null)}>ULANGI</Button><Button variant={attendanceType==='IN'?'primary':'secondary'} className="flex-[2] h-14" onClick={handleAction} disabled={isProcessing}>REKAM</Button></div>
-          )}
-        </div>
-      );
-    }
-
+    // Render aplikasi
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
